@@ -1,7 +1,7 @@
 <idea-plugin>
   <id>com.google.bamboo.id</id>
   <name>Bamboo Soy</name>
-  <version>1.2</version>
+  <version>1.2.1</version>
   <vendor>Google</vendor>
 
   <description><![CDATA[
@@ -10,6 +10,17 @@
   </description>
 
   <change-notes><![CDATA[
+      <p>
+        <b>Release notes for 1.3</b>
+
+        <ul>
+          <li>Formatter: Better support for spacing in and around expressions,</li>
+          <li>General stability and robustness improvements,</li>
+          <li>Fixed ClassCastException occurring when jumping to definitions,</li>
+          <li>More consistent handling of CSS literals,</li>
+       </ul>
+     </p>
+
       <p>
         <b>Release notes for 1.2</b>
 
@@ -174,8 +185,8 @@
       implementation="com.google.bamboo.soy.insight.typedhandlers.EnterHandler"/>
     <editorTypedHandler
       implementationClass="com.google.bamboo.soy.insight.typedhandlers.ClosingTagHandler"/>
-    <editorTypedHandler
-      implementationClass="com.google.bamboo.soy.insight.typedhandlers.QuoteHandler"/>
+    <typedHandler
+      implementation="com.google.bamboo.soy.insight.typedhandlers.QuoteHandler"/>
     <liveTemplateContext implementation="com.google.bamboo.soy.templates.TopLevelContext"/>
     <liveTemplateContext implementation="com.google.bamboo.soy.templates.CallBlockContext"/>
     <liveTemplateContext implementation="com.google.bamboo.soy.templates.TemplateBlockContext"/>
@@ -222,6 +233,8 @@
     <annotator
       language="ClosureTemplate"
       implementationClass="com.google.bamboo.soy.insight.annotators.DoubleQuotedStringAnnotator"/>
+
+    <errorHandler implementation="com.google.bamboo.soy.RollbarErrorReportSubmitter"/>
   </extensions>
 
   <actions>

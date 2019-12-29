@@ -17,6 +17,7 @@
   implements("Begin.*|.*Tag|.*Block")="com.google.bamboo.soy.elements.TagElement"
   implements("(Css|LetSingle|SpecialCharacter|Xid|Print)Statement")
       = ["com.google.bamboo.soy.elements.StatementElement" "com.google.bamboo.soy.elements.TagElement"]
+  implements("LiteralStatement") = ["com.google.bamboo.soy.elements.StatementElement"]
   implements(".*Statement")
       = ["com.google.bamboo.soy.elements.StatementElement" "com.google.bamboo.soy.elements.TagBlockElement"]
 
@@ -33,6 +34,7 @@
     AT_INJECT = "@inject"
     AT_INJECT_OPT = "@inject?"
     BOOL_LITERAL = "regexp:false|true"
+    NULL_LITERAL = "null"
     CALL = "call"
     CARRIAGE_RETURN = "\\r"
     CASE = "case"
@@ -121,11 +123,11 @@
 
     DOC_COMMENT_BLOCK = "regexp:(/\**([^*]|(\*+[^*/]))*(\*+/))"
     COMMENT_BLOCK = "regexp:(/\*([^*]|(\*+[^*/]))*(\*+/))"
-    HTML_COMMENT ="regexp:<!--([^\r\n]|(\r|\n|\r\n))*-->"
+    HTML_COMMENT ="regexp:<!--([^\r\n]|(\r|\n|\r\n))*?-->"
 
     IDENTIFIER_WORD = "regexp:[a-zA-Z_]([a-zA-Z_0-9])*"
     QUALIFIED_IDENTIFIER = "regexp:\.?[a-zA-Z_]([a-zA-Z_0-9])(\.[a-zA-Z_]([a-zA-Z_0-9]))*"
-    CSS_IDENTIFIER_LITERAL = "regexp:%?[a-zA-Z_-]([a-zA-Z_0-9-])*"
+    CSS_XID_IDENTIFIER = "regexp:%?[a-zA-Z_.-]([a-zA-Z_0-9.-])*"
 
     STRING_LITERAL = "regexp:'([^\r\n'\\]|\\.)*'"
     MULTI_LINE_STRING_LITERAL = "regexp:'([^'\\]|\\([^]))*'"
@@ -168,13 +170,6 @@ private FieldAccess ::= (DOT | DOT_NULL_CHECK) IDENTIFIER_WORD {
 
 // A sequence of tokens representing namespace, template or function id: my.name.space, .template
 private QualifiedIdentifier ::= QUALIFIED_IDENTIFIER
-
-// A valid css identifier: dashes are allowed, dots are not: -foo-bar, %foo-bar, foo
-CssIdentifier ::= CSS_IDENTIFIER_LITERAL | PlainIdentifier
-
-// A lax rule for xid identifier: dashes are allowed, dots are allowed: %-foo.bar, %foo-bar, foo
-// Should be caught by annotation.
-XidIdentifier ::= (DOT? (CSS_IDENTIFIER_LITERAL | PlainIdentifier))+
 
 TemplateDefinitionIdentifier ::= QualifiedIdentifier {
   mixin="com.google.bamboo.soy.elements.impl.TemplateDefinitionMixin"
@@ -236,7 +231,7 @@ FunctionIdentifier ::= PlainIdentifier
 
 // Literals
 
-ValueLiteral ::= NumberLiteral | AnyStringLiteral | BOOL_LITERAL
+private ValueLiteral ::= NumberLiteral | AnyStringLiteral | ProtobufEnum | BOOL_LITERAL | NULL_LITERAL
 
 private NumberLiteral ::= INTEGER_LITERAL | FLOAT_LITERAL | DOT FLOAT_LITERAL
 
@@ -252,7 +247,7 @@ TypeExpression ::= UnionType | CompoundType | PrimitiveType
 
 PrimitiveType
   ::=
-    ANY | STRING | BOOL | INT | FLOAT | NUMBER | HTML | NULL | QUESTIONMARK |
+    ANY | STRING | BOOL | INT | FLOAT | NUMBER | HTML | NULL_LITERAL | QUESTIONMARK |
     URI | JS | ATTRIBUTES | TypeIdentifier
 
 CompoundType ::= ListType | MapType | RecordType
@@ -372,7 +367,7 @@ private meta BeginTemplateBody ::= <<p>> (TemplateDefinitionIdentifier [Attribut
   recoverWhile = "recoverEndOfTag"
 }
 
-private AtParamList ::= (AtParamSingle [DocComment]| AtInjectSingle [DocComment])+
+private AtParamList ::= (AtParamSingle | AtInjectSingle)+
 
 AtParamSingle ::= <<BracedTag AtParamBody>> {
   implements = "com.google.bamboo.soy.elements.AtParamElement"
@@ -381,8 +376,6 @@ AtParamSingle ::= <<BracedTag AtParamBody>> {
   elementTypeFactory = "com.google.bamboo.soy.stubs.StubFactory.getType"
   hooks = [wsBinders = "LEADING_COMMENTS_BINDER, TRAILING_COMMENTS_BINDER"]
 }
-
-DocComment ::= DOC_COMMENT_BLOCK
 
 private AtParamBody ::= (AT_PARAM | AT_PARAM_OPT) ParamDefinitionIdentifier COLON TypeExpression {
   pin = 1
@@ -704,7 +697,7 @@ private BeginCaseClauseTagBody ::= CASE CommaSeparatedExpressionList {
 
 CssStatement ::= <<BracedTag CssStatementTagBody>>
 
-private CssStatementTagBody ::= CSS CssIdentifier
+private CssStatementTagBody ::= CSS CSS_XID_IDENTIFIER
 
 // Let statement
 
@@ -732,7 +725,7 @@ SpecialCharacterStatement ::=
 
 XidStatement ::= <<BracedTag XidStatementTagBody>>
 
-private XidStatementTagBody ::= XID XidIdentifier
+private XidStatementTagBody ::= XID CSS_XID_IDENTIFIER
 
 
 // Literal statement
@@ -762,9 +755,12 @@ Directive
   ::=
     FunctionIdentifier
   |
-    FunctionIdentifier COLON ValueLiteral (COMMA ValueLiteral)*
+    FunctionIdentifier COLON LiteralExpr (COMMA LiteralExpr)*
 
 CommaSeparatedExpressionList ::= Expr (COMMA Expr)* COMMA?
+
+KeyValue ::= (Expr COLON Expr)
+CommaSeparatedKeyValueList ::= KeyValue (COMMA KeyValue)* COMMA?
 
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -790,12 +786,13 @@ private AtomExpr ::= VariableReferenceIdentifier
   | FunctionCallExpr
   | FieldExpr
   | IndexExpr
+  | MapExpr
   | ListExpr
   | ParenthesizedExpr
   | LiteralExpr
 
 
-LiteralExpr ::= NumberLiteral | AnyStringLiteral |  ProtobufEnum | BOOL_LITERAL
+LiteralExpr ::= ValueLiteral
 ProtobufEnum ::= PlainIdentifier (DOT PlainIdentifier)+
 
 NullCheckTernaryExpr ::= Expr QUESTIONMARK Expr COLON Expr
@@ -813,5 +810,6 @@ UnaryExpr ::= (PLUS | MINUS | NOT | EXCLAMATION) Expr
 FunctionCallExpr ::= FunctionIdentifier PARENS_OPEN [CommaSeparatedExpressionList] PARENS_CLOSE
 FieldExpr ::= Expr FieldAccess
 IndexExpr ::= Expr (SQUARE_OPEN | INDEX_NULL_CHECK) [CommaSeparatedExpressionList] SQUARE_CLOSE
+MapExpr ::= SQUARE_OPEN [CommaSeparatedKeyValueList] SQUARE_CLOSE
 ListExpr ::= SQUARE_OPEN [CommaSeparatedExpressionList] SQUARE_CLOSE
 ParenthesizedExpr ::= PARENS_OPEN Expr PARENS_CLOSE

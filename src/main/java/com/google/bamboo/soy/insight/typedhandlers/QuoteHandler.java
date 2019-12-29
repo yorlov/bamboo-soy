@@ -14,14 +14,22 @@
 
 package com.google.bamboo.soy.insight.typedhandlers;
 
+import com.google.bamboo.soy.file.SoyFileType;
 import com.google.common.collect.ImmutableSet;
+import com.intellij.codeInsight.editorActions.TypedHandlerDelegate;
+import com.intellij.codeInsight.editorActions.enter.EnterHandlerDelegate;
+import com.intellij.codeInsight.editorActions.enter.EnterHandlerDelegate.Result;
+import com.intellij.ide.highlighter.HtmlFileType;
 import com.intellij.openapi.actionSystem.DataContext;
 import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.editor.actionSystem.TypedActionHandler;
+import com.intellij.openapi.fileTypes.FileType;
+import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Pair;
 import com.intellij.openapi.util.TextRange;
 import com.intellij.psi.PsiDocumentManager;
+import com.intellij.psi.PsiFile;
 import java.util.Set;
 import java.util.function.Function;
 import org.jetbrains.annotations.NotNull;
@@ -29,7 +37,7 @@ import org.jetbrains.annotations.NotNull;
 /**
  * Inserts a matching closing character (quote, parenthesis, bracket) when typing one.
  */
-public class QuoteHandler implements TypedActionHandler {
+public class QuoteHandler extends TypedHandlerDelegate {
 
   private final Set<Pair<Character, Character>> matchingCharacters = ImmutableSet
       .of(Pair.create('"', '"'), Pair.create('\'', '\''), Pair.create('(', ')'),
@@ -38,13 +46,14 @@ public class QuoteHandler implements TypedActionHandler {
   private final Set<String> allowedPreviousCharacters = ImmutableSet
       .of("\n", " ", "[", "(", "=");
   private final Set<String> allowedNextCharacters = ImmutableSet.of("\n", " ", "]", ")", "}");
-  private final TypedActionHandler myOriginalHandler;
 
-  public QuoteHandler(TypedActionHandler originalHandler) {
-    myOriginalHandler = originalHandler;
-  }
+  @Override
+  public Result beforeCharTyped(char charTyped, final Project project, final Editor editor,
+      final PsiFile file, final FileType fileType) {
+    if (file.getFileType() != SoyFileType.INSTANCE && file.getFileType() != HtmlFileType.INSTANCE) {
+      return Result.CONTINUE;
+    }
 
-  public void execute(@NotNull Editor editor, char charTyped, @NotNull DataContext dataContext) {
     Document document = editor.getDocument();
     int caretOffset = editor.getCaretModel().getOffset();
 
@@ -62,38 +71,31 @@ public class QuoteHandler implements TypedActionHandler {
     Pair<Character, Character> matchingPairReverse = getMatchingPair(charTyped,
         p -> p.getSecond());
     if (matchingPairReverse != null && nextChar.equals(charTyped + "")) {
-      int countLeft = 0;
-      int countRight = 0;
+      boolean pairOfEqualChars = (matchingPairReverse.first == matchingPairReverse.second);
 
-      // Number of opens on the left
-      for (String c : textBeforeCaret.split("")) {
-        if (c.equals(matchingPairReverse.first + "")) {
-          countLeft++;
-        } else if (c.equals(matchingPairReverse.second + "") && countLeft > 0) {
-          countLeft--;
-        }
-      }
+      // Number of opens on the left of the caret.
+      int countLeft = computeCount(textBeforeCaret, matchingPairReverse.first,
+          matchingPairReverse.second);
 
-      // Number of closes on the right
-      for (String c : textAfterCaret.split("")) {
-        if (c.equals(matchingPairReverse.second + "")) {
-          countRight++;
-        } else if (c.equals(matchingPairReverse.first + "") && countRight > 0) {
-          countRight--;
-        }
-      }
+      // Number of closes on the right of the caret.
+      int countRight = computeCount(textAfterCaret, matchingPairReverse.second,
+          matchingPairReverse.first);
 
-      if (countLeft <= countRight) {
+      // When the pair is made of equal characters (like quotes) then only trigger if there is
+      // a balance of 1-1 around the caret, which means that the quote is already closed and
+      // inserting a new quote would create an imbalance.
+      if (((!pairOfEqualChars && countLeft <= countRight) || (pairOfEqualChars
+          && countLeft == countRight)) && countRight > 0) {
         editor.getCaretModel().moveToOffset(caretOffset + 1);
-        return;
+        return Result.STOP;
       }
     } else {
       Pair<Character, Character> matchingPair = getMatchingPair(charTyped,
           p -> p.getFirst());
       if (matchingPair != null) {
-        if ((alwaysCloseCharacters.contains(matchingPair.first) || allowedPreviousCharacters
+        if ((alwaysCloseCharacters.contains(matchingPair.first) || (allowedPreviousCharacters
             .contains(prevChar)) && allowedNextCharacters.contains(nextChar)
-            && !nextChar.equals(matchingPair.second + "")) {
+            && !nextChar.equals(matchingPair.second + ""))) {
           document.insertString(editor.getCaretModel().getOffset(), matchingPair.second + "");
 
           if (editor.getProject() != null) {
@@ -103,7 +105,28 @@ public class QuoteHandler implements TypedActionHandler {
       }
     }
 
-    myOriginalHandler.execute(editor, charTyped, dataContext);
+    return Result.CONTINUE;
+  }
+
+  /**
+   * Returns the count of the number of opens or closes in the given {@code text}.
+   */
+  private int computeCount(String text, char first, char second) {
+    boolean pairOfEqualChars = (first == second);
+
+    int count = 0;
+    for (String c : text.split("")) {
+      if (c.equals(first + "")) {
+        if (pairOfEqualChars && count > 0) {
+          count--;
+        } else {
+          count++;
+        }
+      } else if (c.equals(second + "") && count > 0) {
+        count--;
+      }
+    }
+    return count;
   }
 
   private Pair<Character, Character> getMatchingPair(Character charTyped,
